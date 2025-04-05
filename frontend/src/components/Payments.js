@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+// Add these imports at the top of the file
+import { fetchTransactions, confirmTransaction, generateReceipt } from './api';
+import { useEffect } from 'react';
 import {
   Typography,
   Box,
@@ -26,7 +29,10 @@ import {
   InputLabel,
   Card,
   CardContent,
-  Divider
+  Divider,
+  CircularProgress,
+  Alert,
+  Snackbar
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
@@ -42,62 +48,148 @@ const Payments = () => {
   const [openDialog, setOpenDialog] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [paymentPeriod, setPaymentPeriod] = useState('all');
+  // Replace the static summaryData with state
+  const [summaryData, setSummaryData] = useState({
+    totalCollected: 0,
+    pendingPayments: 0,
+    overduePayments: 0,
+    totalPayments: 0
+  });
 
-  // Placeholder data for payments
-  const paymentsData = [
-    {
-      id: 'PAY-20250315-001',
-      tenant: 'John Doe',
-      property: '121 Main Street, Apt 2B',
-      amount: 1200.00,
-      date: '2025-03-15',
-      method: 'Credit Card',
-      status: 'Completed'
-    },
-    {
-      id: 'PAY-20250312-002',
-      tenant: 'Jane Smith',
-      property: '456 Oak Avenue',
-      amount: 2400.00,
-      date: '2025-03-12',
-      method: 'Bank Transfer',
-      status: 'Completed'
-    },
-    {
-      id: 'PAY-20250310-003',
-      tenant: 'Robert Johnson',
-      property: '789 Pine Street, Unit 3',
-      amount: 1800.00,
-      date: '2025-03-10',
-      method: 'Cash',
-      status: 'Completed'
-    },
-    {
-      id: 'PAY-20250401-004',
-      tenant: 'Emily Davis',
-      property: '101 Elm Court, Apt 5C',
-      amount: 950.00,
-      date: '2025-04-01',
-      method: 'Credit Card',
-      status: 'Pending'
-    },
-    {
-      id: 'PAY-20250405-005',
-      tenant: 'Michael Wilson',
-      property: '202 Maple Drive',
-      amount: 2100.00,
-      date: '2025-04-05',
-      method: 'Check',
-      status: 'Overdue'
-    },
-  ];
+  // State for payments data and UI states
+  const [paymentsData, setPaymentsData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Summary data
-  const summaryData = {
-    totalCollected: 5400.00,
-    pendingPayments: 950.00,
-    overduePayments: 2100.00,
-    totalPayments: 8450.00
+  // State for notifications
+  const [notification, setNotification] = useState({
+    open: false,
+    message: '',
+    severity: 'info'
+  });
+
+  // Add this useEffect to fetch transactions when component mounts
+  useEffect(() => {
+    const loadTransactions = async () => {
+      setLoading(true);
+      try {
+        const transactions = await fetchTransactions();
+
+        if (Array.isArray(transactions)) {
+          setPaymentsData(transactions);
+
+          // Calculate summary data from fetched transactions
+          const completed = transactions
+            .filter(t => t.status === 'COMPLETED')
+            .reduce((sum, t) => sum + t.amount, 0);
+
+          const pending = transactions
+            .filter(t => t.status === 'PENDING')
+            .reduce((sum, t) => sum + t.amount, 0);
+
+          setSummaryData({
+            totalCollected: completed,
+            pendingPayments: pending,
+            overduePayments: 0, // M-Pesa doesn't have overdue status
+            totalPayments: completed + pending
+          });
+        } else {
+          throw new Error('Invalid response format: expected an array of transactions');
+        }
+
+        setError(null);
+      } catch (err) {
+        console.error('Transaction loading error:', err);
+        setError(`Failed to load transactions: ${err.message}`);
+
+        // Set empty data on error
+        setPaymentsData([]);
+        setSummaryData({
+          totalCollected: 0,
+          pendingPayments: 0,
+          overduePayments: 0,
+          totalPayments: 0
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTransactions();
+  }, []);
+
+  // Function to handle confirming a transaction
+  const handleConfirmTransaction = async (transactionId) => {
+    try {
+      setLoading(true);
+      await confirmTransaction(transactionId);
+
+      // Refresh the transactions list after confirmation
+      const updatedTransactions = await fetchTransactions();
+
+      if (Array.isArray(updatedTransactions)) {
+        setPaymentsData(updatedTransactions);
+
+        // Recalculate summary data
+        const completed = updatedTransactions
+          .filter(t => t.status === 'COMPLETED')
+          .reduce((sum, t) => sum + t.amount, 0);
+
+        const pending = updatedTransactions
+          .filter(t => t.status === 'PENDING')
+          .reduce((sum, t) => sum + t.amount, 0);
+
+        setSummaryData({
+          totalCollected: completed,
+          pendingPayments: pending,
+          overduePayments: 0,
+          totalPayments: completed + pending
+        });
+      }
+
+      // Show success notification
+      setNotification({
+        open: true,
+        message: 'Transaction confirmed successfully',
+        severity: 'success'
+      });
+    } catch (err) {
+      console.error('Error confirming transaction:', err);
+      setNotification({
+        open: true,
+        message: `Error confirming transaction: ${err.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Function to handle generating a receipt
+  const handleGenerateReceipt = async (transactionId) => {
+    try {
+      setLoading(true);
+      const receipt = await generateReceipt(transactionId);
+      console.log('Receipt generated:', receipt);
+
+      // Show success notification
+      setNotification({
+        open: true,
+        message: 'Receipt generated successfully',
+        severity: 'success'
+      });
+
+      // TODO: Implement receipt display logic - could open a new dialog here
+    } catch (err) {
+      console.error('Error generating receipt:', err);
+      setNotification({
+        open: true,
+        message: `Error generating receipt: ${err.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOpenDialog = () => {
@@ -116,23 +208,36 @@ const Payments = () => {
     setPaymentPeriod(event.target.value);
   };
 
-  const filteredPayments = paymentsData.filter(payment => {
-    const matchesSearch = payment.tenant.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payment.property.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payment.id.toLowerCase().includes(searchTerm.toLowerCase());
+  const handleCloseNotification = () => {
+    setNotification({
+      ...notification,
+      open: false
+    });
+  };
 
-    const currentMonth = new Date().getMonth() + 1;
-    const paymentMonth = new Date(payment.date).getMonth() + 1;
+  // Filter payments based on search and period filters
+  const filteredPayments = paymentsData.filter(payment => {
+    const matchesSearch =
+      payment.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      payment.transaction_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      payment.company_ref?.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const paymentDate = new Date(payment.transaction_time);
+    const currentMonth = new Date().getMonth();
+    const paymentMonth = paymentDate.getMonth();
 
     if (paymentPeriod === 'all') return matchesSearch;
     if (paymentPeriod === 'current') return matchesSearch && paymentMonth === currentMonth;
-    if (paymentPeriod === 'pending') return matchesSearch && payment.status === 'Pending';
-    if (paymentPeriod === 'overdue') return matchesSearch && payment.status === 'Overdue';
+    if (paymentPeriod === 'pending') return matchesSearch && payment.status === 'PENDING';
+    // Not applicable for M-Pesa but kept for consistency
+    if (paymentPeriod === 'overdue') return false;
+
     return matchesSearch;
   });
 
   return (
     <Box>
+      {/* Title and Add Payment Button */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" gutterBottom>Payments</Typography>
         <Button
@@ -143,6 +248,13 @@ const Payments = () => {
           Record Payment
         </Button>
       </Box>
+
+      {/* Error Alert */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
 
       {/* Payment Summary Cards */}
       <Grid container spacing={3} sx={{ mb: 3 }}>
@@ -230,8 +342,7 @@ const Payments = () => {
           <TableHead>
             <TableRow>
               <TableCell>Payment ID</TableCell>
-              <TableCell>Tenant</TableCell>
-              <TableCell>Property</TableCell>
+              <TableCell>Tenant Name</TableCell>
               <TableCell>Amount</TableCell>
               <TableCell>Date</TableCell>
               <TableCell>Method</TableCell>
@@ -240,34 +351,66 @@ const Payments = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredPayments.map((payment) => (
-              <TableRow key={payment.id}>
-                <TableCell>{payment.id}</TableCell>
-                <TableCell>{payment.tenant}</TableCell>
-                <TableCell>{payment.property}</TableCell>
-                <TableCell>${payment.amount.toFixed(2)}</TableCell>
-                <TableCell>{new Date(payment.date).toLocaleDateString()}</TableCell>
-                <TableCell>{payment.method}</TableCell>
-                <TableCell>
-                  <Chip
-                    label={payment.status}
-                    color={
-                      payment.status === 'Completed' ? 'success' :
-                      payment.status === 'Pending' ? 'info' : 'error'
-                    }
-                    size="small"
-                  />
-                </TableCell>
-                <TableCell>
-                  <IconButton size="small" title="View Details">
-                    <VisibilityIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton size="small" title="Print Receipt">
-                    <PrintIcon fontSize="small" />
-                  </IconButton>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={7} align="center">
+                  <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                    <CircularProgress />
+                  </Box>
                 </TableCell>
               </TableRow>
-            ))}
+            ) : error ? (
+              <TableRow>
+                <TableCell colSpan={7} align="center" style={{ color: 'red' }}>{error}</TableCell>
+              </TableRow>
+            ) : filteredPayments.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} align="center">No transactions found</TableCell>
+              </TableRow>
+            ) : (
+              filteredPayments.map((payment) => (
+                <TableRow key={payment.transaction_id}>
+                  <TableCell>{payment.company_ref || payment.transaction_id}</TableCell>
+                  <TableCell>{payment.customer_name}</TableCell>
+                  <TableCell>${payment.amount.toFixed(2)}</TableCell>
+                  <TableCell>{new Date(payment.transaction_time).toLocaleDateString()}</TableCell>
+                  <TableCell>M-Pesa</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={payment.status === 'COMPLETED' ? 'Completed' : 'Pending'}
+                      color={payment.status === 'COMPLETED' ? 'success' : 'info'}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton
+                      size="small"
+                      title="View Details"
+                      onClick={() => handleGenerateReceipt(payment.transaction_id)}
+                    >
+                      <VisibilityIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      title="Print Receipt"
+                      onClick={() => handleGenerateReceipt(payment.transaction_id)}
+                    >
+                      <PrintIcon fontSize="small" />
+                    </IconButton>
+                    {payment.status !== 'COMPLETED' && (
+                      <IconButton
+                        size="small"
+                        title="Confirm Payment"
+                        onClick={() => handleConfirmTransaction(payment.transaction_id)}
+                        disabled={loading}
+                      >
+                        <CheckIcon fontSize="small" color="success" />
+                      </IconButton>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </TableContainer>
@@ -352,6 +495,21 @@ const Payments = () => {
           <Button variant="contained" onClick={handleCloseDialog}>Record Payment</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Notifications */}
+      <Snackbar
+        open={notification.open}
+        autoHideDuration={6000}
+        onClose={handleCloseNotification}
+      >
+        <Alert
+          onClose={handleCloseNotification}
+          severity={notification.severity}
+          sx={{ width: '100%' }}
+        >
+          {notification.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
